@@ -1,0 +1,22 @@
+{
+    "name": "paulvl/laracart",
+    "description": "A Shopping Cart build for Laravel 5.1",
+    "keywords": ["cart", "laracart", "ecommerce", "shopping", "framework", "laravel"],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Paul Vidal",
+            "email": "i@paulvl.me"
+        }
+    ],
+    "minimum-stability": "dev",
+    "require": {
+        "php": ">=5.5.9",
+        "laravel/framework": "5.1.*"
+    },
+    "autoload": {
+        "psr-4": {
+            "LaraCart\\": "src/"
+        }
+    }
+}
