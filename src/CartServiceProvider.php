@@ -20,11 +20,9 @@ class CartServiceProvider extends ServiceProvider
      */
     public function boot()
     {
-        /*
         $this->publishes([
-            __DIR__.'/../../../lang/en/confirmations.php' => base_path('resources/lang/en/confirmations.php')
-        ]);
-        */
+            __DIR__.'/../config/laracart.php' => config_path('laracart.php')
+        ]);        
     }
 
     /**

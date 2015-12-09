@@ -16,6 +16,7 @@ class Cart implements CartInterface
 		$this->cartSessionId = config('session.cookie') . 'laracart_cart';
 		$this->couponsSessionId = config('session.cookie') . 'laracart_coupons';
 		$this->otherChargesSessionId = config('session.cookie') . 'laracart_other_charges';
+		$this->priceIncludeTaxes = config('laracart.price_include_taxes');
 		$this->validateSessions();
 	}
 
@@ -39,6 +40,8 @@ class Cart implements CartInterface
 	public function addCoupon(array $couponData)
 	{
 		$couponData = $this->validateCouponData($couponData);
+
+		$this->createCouponsSession();
 
 		$cartCoupons = $this->getCouponsCollection();
 		
@@ -139,43 +142,33 @@ class Cart implements CartInterface
 
 	public function total($summarized = false)
 	{
-		$amount = $this->getCartCollection()->sum(function ($item) {
-			return $item->quantity * $item->price;
-		});
+		$totals = $this->getTotals();
 
-		$discount = $this->getCartCollection()->sum(function ($item) {
-			return $this->getPercentageValue($item->discount);
-		});
+		$summary['amount'] = $totals['amount'];
 
-		$taxes = $this->getCartCollection()->sum(function ($item) {
-			return $this->getPercentageValue($item->tax);
-		});
-
-		$summary['amount'] = $amount;
-
-		$summary['discount'] = $summary['amount'] * $discount;
+		$summary['discount'] = $totals['discount'];
 
 		$summary['subTotal'] = $summary['amount'] + $summary['discount'];
 
-		$summary['taxes'] = $summary['subTotal'] * $taxes;
+		$summary['taxes'] = $totals['taxes'];
 
 		if( $this->getCouponsCollection()->count() > 0 )
 		{
-			$couponDiscount = $this->getCouponsCollection()->sum(function ($coupon) {
-				return $this->getPercentageValue($coupon->discount);
-			});
 
-			$couponDiscountValue = $summary['subTotal'] * $couponDiscount;			
+			$discountsData = $this->setDiscountCoupons($summary['subTotal']);
+
+			$couponDiscountValue = array_sum($discountsData['discounts']);
+			$summary = array_merge($summary, $discountsData['discounts']);			
 
 			$totalValue = $summary['subTotal'] + $couponDiscountValue;
 
+			$undiscountedTaxes = $summary['taxes'];
+
 			unset($summary['taxes']);
 
-			$summary['couponDiscount'] = $couponDiscountValue;
+			$summary['total'] = $totalValue;			
 
-			$summary['total'] = $totalValue;
-
-			$summary['taxes'] = $summary['total'] * $taxes;
+			$summary['taxes'] = $undiscountedTaxes * $discountsData['discountTotalInvertedPercentage'];
 
 			$otherChargesArray = $this->setOtherCharges();
 			$otherChargesValue = array_sum($otherChargesArray);
@@ -187,6 +180,7 @@ class Cart implements CartInterface
 			$otherChargesArray = $this->setOtherCharges();
 			$otherChargesValue = array_sum($otherChargesArray);
 			$summary = array_merge($summary, $otherChargesArray);
+
 			$summary['totalDue'] = $summary['subTotal'] + $summary['taxes'] + $otherChargesValue;
 		}
 
@@ -196,6 +190,31 @@ class Cart implements CartInterface
 		return $summary['totalDue']; 
 	}
 
+	protected function getTotals()
+	{
+		$amount = $this->getCartCollection()->sum(function ($item) {
+			return $item->quantity * $item->price;
+		});
+
+		$discount = $this->getCartCollection()->sum(function ($item) {
+			$amount = $item->quantity * $item->price;
+			return $amount * $this->getPercentageValue($item->discount);
+		});
+
+		$taxes = $this->getCartCollection()->sum(function ($item) {
+			$amount = $item->quantity * $item->price;
+			$discount = $amount * $this->getPercentageValue($item->discount);
+			return ( $amount + $discount ) * $this->getPercentageValue($item->tax);
+		});
+
+		return [
+			'amount' => $this->roundMoney( $amount ),
+			'discount' => $this->roundMoney( $discount ),
+			'taxes' => $this->roundMoney( $taxes )
+		];
+
+	}
+
 	protected function setOtherCharges()
 	{
 		$array = array();
@@ -203,6 +222,27 @@ class Cart implements CartInterface
 		foreach ($this->getOtherChargesCollection() as $otherCharge) {
 			$array[$otherCharge->name] = $otherCharge->amount;
 		}
+
+		return $array;
+	}
+
+	protected function setDiscountCoupons($subTotal)
+	{
+		$array = array();
+		$discounts = array();
+
+		$discountTotalInvertedPercentage = 1;
+		
+		foreach ($this->getCouponsCollection() as $coupon) {
+			$discountPercentage = $this->getPercentageValue($coupon->discount);
+			$discountTotalInvertedPercentage = $discountTotalInvertedPercentage * ( 1 + $discountPercentage );
+			$discountedAmount = $subTotal * $discountPercentage;
+			$subTotal = $subTotal + $discountedAmount;
+			$discounts[$coupon->name] = $this->roundMoney( $discountedAmount );
+		}
+
+		$array['discountTotalInvertedPercentage'] = $discountTotalInvertedPercentage;
+		$array['discounts'] = $discounts;
 
 		return $array;
 	}
@@ -242,7 +282,16 @@ class Cart implements CartInterface
 
 	private function getCartCollection()
 	{
-		return session()->get($this->cartSessionId);
+		$cartCollection = session()->get($this->cartSessionId)->each(function ($item, $key) {
+		    if($this->priceIncludeTaxes)
+			{
+				$taxPercentage = $this->getPercentageValue($item->tax);
+				$item->price = $this->roundMoney( $item->price / ( 1 + $taxPercentage ) );
+
+			}
+		});
+
+		return $cartCollection;
 	}
 
 	private function getCouponsCollection()
@@ -344,5 +393,10 @@ class Cart implements CartInterface
 	protected function validateNumericValue($value)
 	{
 		return preg_match("/^[0-9]*\.{0,1}\d{1,2}/", $value);
+	}
+
+	protected function roundMoney($value)
+	{
+		return round( $value, 2 );
 	}
 }
